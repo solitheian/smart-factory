@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 import joblib
 import time
+import numpy as np
+import os
+from tensorflow.keras.models import load_model
 
 # =============================================================================
 # KONFIGURASI HALAMAN
@@ -432,7 +435,7 @@ hr { border: none !important; border-top: 1px solid var(--border-strong) !import
 """, unsafe_allow_html=True)
 
 # Floating Watermark
-st.markdown('<div class="watermark">ML Project · Random Forest Classifier</div>', unsafe_allow_html=True)
+st.markdown('<div class="watermark">ML Project · Multi-Model AI</div>', unsafe_allow_html=True)
 
 
 # =============================================================================
@@ -474,11 +477,17 @@ if not st.session_state.masuk:
 # =============================================================================
 @st.cache_resource
 def load_assets():
-    model  = joblib.load('model_mesin_rf.pkl')
-    scaler = joblib.load('scaler_mesin.pkl')
-    return model, scaler
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    rf_path = os.path.join(BASE_DIR, 'model_mesin_rf.pkl')
+    lstm_path = os.path.join(BASE_DIR, 'model_mesin_lstm.h5')
+    scaler_path = os.path.join(BASE_DIR, 'scaler_mesin.pkl')
+    
+    model_rf = joblib.load(rf_path)
+    model_lstm = load_model(lstm_path)
+    scaler = joblib.load(scaler_path)
+    return model_rf, model_lstm, scaler
 
-model, scaler = load_assets()
+model_rf, model_lstm, scaler = load_assets()
 
 
 # =============================================================================
@@ -564,9 +573,9 @@ if menu == "Dashboard Pemantauan":
     st.markdown("""
         <div class="kpi-strip">
             <div class="kpi-card">
-                <div class="kpi-label">Model</div>
-                <div class="kpi-value">RF</div>
-                <div class="kpi-sub">Random Forest Classifier</div>
+                <div class="kpi-label">Model AI</div>
+                <div class="kpi-value">RF & LSTM</div>
+                <div class="kpi-sub">Multi-Model Classifier</div>
             </div>
             <div class="kpi-card">
                 <div class="kpi-label">Akurasi Model</div>
@@ -624,6 +633,14 @@ if menu == "Dashboard Pemantauan":
                     </span>
                 </div>
             """, unsafe_allow_html=True)
+            
+            # --- TAMBAHAN PILIHAN MODEL AI ---
+            st.markdown("<p class='section-label' style='margin-top:18px;'>Pengaturan Model AI</p>", unsafe_allow_html=True)
+            pilihan_model = st.radio(
+                "Pilih Algoritma Diagnosis:",
+                ("Random Forest (Rekomendasi)", "LSTM (Deep Learning)"),
+                label_visibility="collapsed"
+            )
 
             st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
             submit = st.button("JALANKAN DIAGNOSIS", use_container_width=True)
@@ -645,13 +662,29 @@ if menu == "Dashboard Pemantauan":
                         'Tool wear [min]':          [tool_wear],
                     })
                     input_scaled = scaler.transform(input_df)
-                    prediction   = model.predict(input_scaled)
-                    pred_proba   = model.predict_proba(input_scaled)[0]
-
-                is_risk = (prediction[0] == 1)
+                    
+                    # Logika Pemilihan Model RF / LSTM
+                    if "Random Forest" in pilihan_model:
+                        prediction   = model_rf.predict(input_scaled)
+                        pred_proba   = model_rf.predict_proba(input_scaled)[0]
+                        is_risk = (prediction[0] == 1)
+                        
+                        if is_risk:
+                            confidence = round(pred_proba[1] * 100, 1)
+                        else:
+                            confidence = round(pred_proba[0] * 100, 1)
+                            
+                    else:
+                        input_lstm = np.reshape(input_scaled, (1, 1, input_scaled.shape[1]))
+                        pred_prob_lstm = model_lstm.predict(input_lstm)[0][0]
+                        is_risk = (pred_prob_lstm > 0.5)
+                        
+                        if is_risk:
+                            confidence = round(pred_prob_lstm * 100, 1)
+                        else:
+                            confidence = round((1 - pred_prob_lstm) * 100, 1)
 
                 if is_risk:
-                    confidence = round(pred_proba[1] * 100, 1)
                     st.markdown(f"""
                         <div class="diag-panel risk">
                             <div class="diag-status-label risk">⚠ Peringatan Kritis</div>
@@ -669,7 +702,6 @@ if menu == "Dashboard Pemantauan":
                     with col_m2:
                         st.metric("Confidence Model", f"{confidence}%", delta=None)
                 else:
-                    confidence = round(pred_proba[0] * 100, 1)
                     st.markdown(f"""
                         <div class="diag-panel safe">
                             <div class="diag-status-label safe">✓ Sistem Normal</div>
